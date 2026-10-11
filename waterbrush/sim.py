@@ -68,7 +68,9 @@ class Sim:
         self.h = self.paper.height_field(shape, self.dx, seed)
         self.relief = self.paper.relief_mm * self.h          # surface elevation, mm
         cap = self.paper.capacity_mm
-        self.c = cap * (0.7 + 0.3 * (1.0 - self.h))          # Curtis: capacity follows h
+        # [CGW §4.1]: c = c_min + h (c_max - c_min), c_min 0.3, c_max 0.7 (research.md §2),
+        # scaled so the highest cells hold the paper's full capacity.
+        self.c = cap * (0.3 + 0.4 * self.h) / 0.7
         self.tilt = (0.0, 0.0)                               # slope dz/dx, dz/dy
 
         self.w = np.zeros(shape)

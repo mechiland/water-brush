@@ -26,7 +26,38 @@ Next:
 - Obtain the PDF, verify each tagged item, record page numbers, fix
   anything recalled wrongly. Then mark M0 done and begin M1.
 
-## Round 2 (2026-10-11): M1 flat wash
+## Round 2 (2026-10-11)
+
+Done:
+- The network policy now allows grail.cs.washington.edu. Downloaded the
+  PDF (10 pages) and read §3-5 plus the related parts of §2, §6.1 and
+  Future Work, checking the pseudocode and the Fig. 5 table on rendered
+  page images, since the text extraction drops Greek letters and minus signs.
+- Rewrote `notes/research.md` with section and page citations.
+  Corrections to the round 1 recall:
+  - η is a range, 0.01 ≤ η ≤ 0.05, not a single 0.05.
+  - The printed pseudocode really has `A − μB`; eq. 1 has `+μ∇²u`. We
+    choose `+μB` and say why.
+  - [CGW] have no evaporation routine, and capillary absorption does not
+    remove surface water. Our explicit drying is a departure, listed.
+  - [CGW] give no values for α, ε, δ, σ, c_min, c_max. Marked 估计.
+  - The backrun inequality δ < σ is our inference from the pseudocode,
+    not stated in the paper.
+  - MovePigment as printed has no Δt factor; we add it.
+  - The capillary layer is used only for backruns in [CGW].
+- Added the full Fig. 5 pigment table (K, S, ρ, ω, γ for 12 pigments) and
+  a starting-point plan for our 8 tube pigments.
+
+Verification:
+- `python3 -m pytest`: 1 passed.
+- M0 acceptance: every mechanism (flow, diffusion, deposition,
+  evaporation, backruns, edge darkening) has a mechanism description and
+  parameters with a source or an 估计 tag. Passed. M0 marked done.
+
+Next:
+- M1: paper height field and capillary capacity.
+
+## Round 3 (2026-10-11): M1 flat wash
 
 Done:
 - Built the three-layer simulation (`waterbrush/sim.py`): surface water
@@ -56,10 +87,15 @@ Tries before passing:
    in the outermost cells, 1 mm band about 1.2.
 4. Added capillary pressure to the film mobility (factor 1 + (l_c/ℓ)²):
    1 mm band 1.56. Passed.
+5. Merged the verified M0 notes. Capillary capacity now follows [CGW]'s
+   `c = c_min + h (c_max − c_min)` (higher on peaks; it was the other way
+   round). §11 moved on top of the verified research.md with section
+   references updated (FlowOutward §3.4, drying §3.5), and three rows
+   added to the §10 departure table. Re-ran: 1.57.
 
 Verification:
-- `python3 -m pytest`: 6 passed (85 s). Edge band (outer 1 mm) / interior
-  (>= 10 mm) = 1.56; wash touch-dry at t = 1080 s.
+- `python3 -m pytest`: 6 passed (about 100 s). Edge band (outer 1 mm) /
+  interior (>= 10 mm) = 1.57; wash touch-dry at t = 1110 s.
 - Grid check: the same wash at 0.3 mm cells (1 cell per unit, 1000 x 500
   grid) gives 1.74 for the 1 mm band (1.38 for a 2 mm band), dry at
   t = 1075 s, 10 minutes of wall time. The effect is not a grid artefact; the
@@ -70,5 +106,5 @@ Verification:
   rectangle.
 
 Next:
-- M0 still needs the PDF check. M2 smallest item: wet-on-dry transition
+- M2 smallest item: wet-on-dry transition
   width <= 3 px.
