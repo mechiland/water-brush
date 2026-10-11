@@ -7,3 +7,9 @@ notes/research.md.
 """
 
 __version__ = "0.0.1"
+
+from .paper import Paper
+from .pigment import Pigment, BURNT_SIENNA
+from .sim import Sim, Params
+
+__all__ = ["Paper", "Pigment", "BURNT_SIENNA", "Sim", "Params"]

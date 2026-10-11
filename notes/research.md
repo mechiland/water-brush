@@ -371,3 +371,140 @@ iteration order so float sums reproduce bit for bit.
 4. Per-pigment `ρ, ω, γ` and the K/S table.
 5. Exact backrun threshold relation.
 6. How [CGW] handle evaporation.
+
+## 11. M1 model as implemented (flat wash and drying)
+
+This section records what the engine actually does for M1 and where it
+departs from §3-6 above. Code: `waterbrush/sim.py`, `waterbrush/paper.py`,
+`waterbrush/pigment.py`, `waterbrush/render.py`.
+
+### 11.1 Departure from [CGW]: thin-film flow instead of a velocity field
+
+[CGW] move surface water with an incompressible velocity field (§3.1-3.2)
+and get edge darkening by lowering pressure near the mask edge (§3.3,
+FlowOutward). Their water layer has no depth, so it cannot run out, and
+drying is not tied to a clock in seconds. The project needs real drying
+times (`wait`, `look` costs 15 s) and a wash that dries by losing water, so
+the shallow layer here carries a water depth `w` (mm) and moves by
+lubrication (thin-film) flow:
+
+```
+q = −(ρ g / 3μ) · f_paper · (1 + (l_c / ℓ)²) · w³ · ∇(w + z)
+∂w/∂t = −∇·q − E − A
+```
+
+- Thin-film flux `q = −(w³ / 3μ) ∇p`: standard lubrication result for a
+  film on a no-slip substrate. Source: A. Oron, S. H. Davis, S. G. Bankoff,
+  "Long-scale evolution of thin liquid films", Rev. Mod. Phys. 69 (1997)
+  931-980, eq. 2.29 form. ρ = 998 kg/m³, μ = 1.0 mPa·s at 20 °C [CRC], so
+  ρg/3μ = 3270 mm⁻¹s⁻¹.
+- `z`: paper surface elevation = relief × h, plus tilt (M4).
+- `f_paper = 0.1`: fraction of free-film mobility left when the film sits in
+  the paper's fibre mat. 估计.
+- `(1 + (l_c/ℓ)²)`: capillary pressure. Below the capillary length
+  `l_c = sqrt(σ/ρg) = 2.7 mm` (σ = 72.8 mN/m [CRC]) surface tension, not
+  gravity, drives levelling; at a feature of size ℓ its pressure is
+  `(l_c/ℓ)²` times the hydrostatic one. We use ℓ = 1 mm, the width over which
+  a pinned edge thins (估计). A full fourth-order surface-tension term would
+  need an implicit solver; this is the cheap substitute.
+- Pigment moves with the water at the upwind cell's concentration, as in
+  [CGW §4.4]; water and pigment are both conserved by construction.
+- Wet mask `M`: water only moves between two wet cells, as in [CGW
+  §4.3.1]. A cell leaves `M` when its depth falls below `w_dry = 2 µm`
+  (估计), and its remaining suspended pigment settles there.
+
+What is kept from [CGW]: the three layers and their roles, the mask
+boundary condition, upwind pigment advection, the transfer step with
+density/staining/granulation, capillary capacity following `h`, and KM
+rendering.
+
+### 11.2 Edge darkening from evaporation at the contact line
+
+Instead of [CGW]'s FlowOutward pressure term, M1 uses its physical cause.
+Deegan et al. showed that a liquid film with a pinned contact line loses
+more vapour near the edge, the flux diverging as `x^(−λ)` with
+`λ = (π − 2θ)/(2π − 2θ)`, which is ½ for a small contact angle θ. Water lost
+at the rim is replaced by flow from the interior, which carries suspended
+pigment to the rim. Source: R. D. Deegan, O. Bakajin, T. F. Dupont, G. Huber,
+S. R. Nagel, T. A. Witten, "Capillary flow as the cause of ring stains from
+dried liquid drops", Nature 389 (1997) 827-829.
+
+```
+E(x) = E₀ · max(1, sqrt(L / x))      x = distance to the wet-area edge
+```
+
+- `E₀ = 1.0e−4 mm/s` (0.36 mm/h): free-surface evaporation in still indoor
+  air. 估计; chosen in the range of indoor pan evaporation and so that the
+  M1 wash is touch-dry in about 15-20 minutes, which matches the 5-15+
+  minute practice figure in §3.3.
+- `L = 5 mm`: length over which the edge enhancement acts, of the order of
+  the vapour boundary layer above a sheet in still air. 估计.
+- Paper with no surface water loses capillary water at `E₀` too. 估计.
+
+### 11.3 Absorption: Lucas-Washburn, calibrated to the Cobb test
+
+```
+dA/dt = S² / (2 s)        (s = water already in the paper; stops at capacity c)
+```
+
+Lucas-Washburn uptake (absorbed depth ∝ √t). Source: E. W. Washburn,
+"The dynamics of capillary flow", Phys. Rev. 17 (1921) 273. Sorptivity `S`
+comes from the Cobb60 value (ISO 535: grams of water taken up per m² in
+60 s; 1 g/m² = 1 µm of depth): `S = Cobb60 / √60`.
+
+- Cobb60 = 15 + 135 (1 − sizing)² g/m². Hard-sized ≈ 15 g/m², unsized
+  ≈ 150 g/m². 估计 (typical ranges quoted for sized writing papers and
+  blotting papers; no watercolour-paper measurement found).
+- Default sizing 0.8 (Cobb60 ≈ 20 g/m²): artists' papers are internally and
+  surface sized. 估计.
+- Capacity `c = 0.3 × thickness`, thickness 0.5 mm at 300 gsm, scaled with
+  weight; `c` varies ±15 % with `h` as in [CGW §4.1]. 0.5 mm is the
+  commonly quoted thickness of 300 gsm cotton paper; porosity 0.3 is 估计.
+- Pigment carried down with absorbed water is caught by the fibres and
+  added to `d`.
+- Capillary wicking inside the paper: diffusion of saturation `s/c` with
+  `D = 0.05 mm²/s`, only out of cells above 5 % saturation ([CGW] ε rule).
+  估计. No mask growth from capillary water yet; that is M2 (backruns).
+
+### 11.4 Settling and lifting
+
+[CGW §4.5] form, with the per-step density ρ replaced by a Stokes settling
+speed `v` so it works in seconds and depends on depth:
+
+```
+δdown = G · min(1, v Δt / w) · (1 − h γ)
+δup   = d · (v Δt / w_ref) · (1 + (h − 1) γ) / ω        (only where wet)
+```
+
+- Stokes: `v = (2/9) Δρ g r² / μ`. Burnt sienna is iron oxide (hematite,
+  5.26 g/cm³ [CRC]); for particle radius 0.15-0.25 µm, v ≈ 0.2-0.6 µm/s.
+  We use 0.3 µm/s = 3e−4 mm/s. Particle size 估计.
+- `w_ref = 0.1 mm`, `ω = 2`, `γ = 0.1` for the M1 pigment: 估计. M3 sets
+  the full palette.
+
+### 11.5 Paper relief
+
+| Texture | Tooth size | Relief (peak to valley) |
+|---|---|---|
+| hot press | 0.6 mm | 0.01 mm |
+| cold press | 1.5 mm | 0.05 mm |
+| rough | 2.5 mm | 0.10 mm |
+
+All 估计. Height field: two octaves of Gaussian-filtered white noise from
+the seed, normalised to [0, 1].
+
+### 11.6 Units and grid
+
+1 canvas unit = 0.3 mm (canvas 1000 units = 300 mm, a quarter imperial
+sheet is 280 × 380 mm). Default grid 0.5 cells per unit (0.6 mm cells).
+Rendering evaluates KM per cell and resamples the reflectance image to the
+output width. 估计.
+
+### 11.7 M1 measurement
+
+Edge band: cells within 1 mm of the wash boundary (distance to the nearest
+dry cell, measured to the cell centre). Interior: cells 10 mm or more inside.
+Ratio = mean `d` in the edge band / mean `d` in the interior. The 1.3 bar is
+the project's; the 1 mm band is our reading of "边缘一圈": the dark line of a
+dried wash is under a millimetre wide on cold-press paper (估计, from
+looking at real washes, no measured source).
