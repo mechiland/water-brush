@@ -2,336 +2,339 @@
 
 Physical mechanisms and numeric sources for the waterbrush engine.
 
-## Source status (read first)
+## Sources
 
-Primary source: C. J. Curtis, S. E. Anderson, J. E. Seims, K. W. Fleischer,
-D. H. Salesin, "Computer-Generated Watercolor", SIGGRAPH 97, pp. 421-430.
-Below it is cited as **[CGW]** with section numbers.
-
-**The PDF could not be opened in round 1.** The cloud environment's network
-policy refused both `grail.cs.washington.edu` and `www.cs.princeton.edu`
-(proxy answered 403 to CONNECT). Everything attributed to [CGW] in this file
-was written from recall of the paper and is tagged:
-
-- `[CGW §x, recalled]`: content I am confident about, but which has not been
-  checked against the PDF text in this repository's history.
-- `[CGW §x, recalled, uncertain]`: I remember the mechanism but not the exact
-  form or number. Must be checked before code depends on it.
-- `估计 (estimate)`: no source; a value chosen by us.
-
-M0 stays open until each `recalled` tag has been checked against the PDF and
-either confirmed (tag changed to `[CGW §x, p.N]`) or corrected. See STATE.md.
-
-Other sources referred to:
-
+- **[CGW]** C. J. Curtis, S. E. Anderson, J. E. Seims, K. W. Fleischer,
+  D. H. Salesin, "Computer-Generated Watercolor", SIGGRAPH 97 Proceedings,
+  pp. 421-430. PDF: https://grail.cs.washington.edu/wp-content/uploads/2015/08/curtis-1997-cgw.pdf
+  Citations below give section and proceedings page, e.g. [CGW §4.3.1 p.424].
+  (PDF page N = proceedings page 420 + N.) Checked against the PDF in round 2.
+- **[Deegan96]** R. D. Deegan et al., "Contact line deposits in an
+  evaporating drop", U. Chicago preprint 1996. Cited by [CGW §4.3.3] as the
+  physical cause of edge darkening (coffee-ring effect).
 - **[KM31]** P. Kubelka, F. Munk, "Ein Beitrag zur Optik der Farbanstriche",
-  Z. Tech. Physik 12, 1931. Two-flux model. Used here only through the
-  closed-form equations restated in [CGW §5].
-- **[Haase92]** C. S. Haase, G. W. Meyer, "Modeling pigmented materials for
-  realistic image synthesis", ACM TOG 11(4), 1992. KM for paint mixing; cited
-  by [CGW] for the KM approach.
-- **[Smith03]** R. Smith, *The Artist's Handbook*, DK. Practical properties of
-  watercolor pigments (granulation, staining). Used for qualitative pigment
-  identity only.
-- **[CRC]** CRC Handbook of Chemistry and Physics, water properties table.
+  Z. Tech. Physik 12, 1931. Used through the equations in [CGW §5].
+- **[Perlin85]** K. Perlin, "An image synthesizer", SIGGRAPH 85.
+  **[Worley96]** S. Worley, "A cellular texturing basis function",
+  SIGGRAPH 96. The two paper-height generators [CGW §4.1] cites.
+- **[Szabo74]** Z. Szabo, *Creative Watercolor Techniques*, 1974. Cited by
+  [CGW §4.6] for when backruns occur.
+- **估计 (estimate)**: no source; a value chosen by us. Each one says what it
+  is meant to achieve so it can be calibrated later.
 
-## 1. Model overview [CGW §3-4, recalled]
+Tags: `[CGW ...]` means the statement or number is printed in the paper.
+`[ours]` means a project decision or an inference not printed in the paper.
 
-A painting is an ordered list of **glazes**. Each glaze is simulated
-independently on a grid and then composited optically with KM ([CGW §5]).
-Inside one glaze there are three layers:
+## 1. Model overview [CGW §3-4 p.423]
+
+A painting is an ordered set of **glazes** (washes). Each glaze is simulated
+independently and then composited optically with KM [CGW §3 p.423].
+Each glaze uses three layers [CGW §4 p.423, Fig. 3]:
 
 | Layer | State variables | Meaning |
 |---|---|---|
-| Shallow-water layer | `u, v` (velocity, staggered MAC grid), `p` (pressure), `g_k` (suspended pigment k), `M` (wet-area mask) | Water and pigment moving over the paper surface. Water only moves where `M = 1`. |
-| Pigment-deposition layer | `d_k` (deposited pigment k) | Pigment that has settled onto the paper and can be picked up again. |
-| Capillary layer | `s` (water saturation), `c` (fluid capacity) | Water absorbed into the paper fibres, diffusing through them. |
+| Shallow-water layer | `u, v` velocity (staggered grid), `p` pressure, `g_k` suspended pigment k, `M` wet-area mask (0/1) | Water and pigment flowing above the paper. Water moves only where `M = 1`. |
+| Pigment-deposition layer | `d_k` deposited pigment k | Pigment adsorbed onto the paper; it can be desorbed again. |
+| Capillary layer | `s` saturation, `c` fluid capacity | Water absorbed into the paper and diffused by capillary action. [CGW] use this layer **only** for backruns [CGW §4 p.423]. |
 
-Paper is a height field `h ∈ [0,1]` per cell. The slope `∇h` pushes surface
-water downhill; `h` also sets capillary capacity and drives granulation.
-
-Main loop per time step [CGW §4.2, recalled]:
+Main loop [CGW §4.2 p.424]:
 
 ```
 for each time step:
-    MoveWater(u, v, p, M)     # 4.3
-    MovePigment(u, v, g, M)   # 4.4
-    TransferPigment(g, d, h, M)  # 4.5
-    CapillaryFlow(s, c, p, M)    # 4.6
+    MoveWater(M, u, v, p)          # UpdateVelocities, RelaxDivergence, FlowOutward
+    MovePigment(M, u, v, g1..gn)
+    TransferPigment(g1..gn, d1..dn)
+    SimulateCapillaryFlow(M, s)
 ```
 
-**Grid for this project (estimate).** Canvas is 1000 units wide, rendered at
-1000-2000 px. Simulation cell = 1 unit by default, so 1 cell = 1 px at the
-1000 px render. 估计.
+Scale reference: [CGW Fig. 10 caption p.429] report a painting of 11 glazes,
+2750 simulator iterations in total, at 640 × 480 px. The discretization is
+resolution-dependent [CGW §4.3.1 p.424], so all constants below are per grid
+cell and per step, not physical units.
 
-## 2. Paper [CGW §4.1, recalled]
+**Grid for this project [ours].** Canvas 1000 units wide, render 1000-2000 px.
+One simulation cell = one canvas unit, so 1 cell = 1 px at 1000 px.
+Because [CGW] is resolution-dependent, we keep the simulation grid fixed at
+1000 cells across and upsample for the 2000 px render, rather than
+simulating at render resolution. 估计.
 
-- Height field `h` from a pseudo-random process. [CGW] mention Perlin noise
-  and Worley cellular textures as generators. [CGW §4.1, recalled, uncertain
-  about which generator was used for which figure]
-- Fluid capacity: `c = h · (c_max − c_min) + c_min`. [CGW §4.1, recalled]
-  Values of `c_min, c_max`: not remembered. 估计 until checked.
-- Paper slope also enters velocity update as `u ← u − ∂h/∂x`,
-  `v ← v − ∂h/∂y`. [CGW §4.3.1, recalled]
+## 2. Paper [CGW §4.1 p.424]
 
-Project paper parameters (M4 requires texture, sizing, weight):
+- Height field `h`, `0 < h < 1`, from pseudo-random processes
+  [Perlin85, Worley96] [CGW §4.1 p.424].
+- Slope `∇h` perturbs velocities (streaks along the flow) [CGW §4.3 p.424].
+- Fluid capacity `c = h · (c_max − c_min) + c_min` [CGW §4.1 p.424].
+  [CGW] give no values for `c_min, c_max`. 估计: `c_min = 0.3`,
+  `c_max = 0.7` (so capacity is a fraction of cell volume, in line with the
+  definition "fraction of volume not occupied by paper fibers" [CGW §4 p.423]).
+- Sizing slows water absorption and diffusion [CGW §2.1 p.422]. The paper
+  has no sizing parameter.
 
-| Parameter | Mapping (proposal) | Source |
+Project paper parameters (M4 requires texture, sizing, weight) [ours]:
+
+| Parameter | Mapping | Source |
 |---|---|---|
-| Texture: hot press / cold press / rough | Amplitude and feature size of `h`. Hot press: low amplitude, fine; rough: high amplitude, coarse (several mm features). | Qualitative description of paper surfaces, common knowledge of paper making. Numbers 估计. |
-| Sizing (施胶) | Scales capillary absorption rate `α` down and raises `δ`/`σ` thresholds; heavily sized paper keeps water on the surface longer. | Qualitative; 估计 for numbers. |
-| Weight (克重): 190 / 300 / 640 gsm | Scales `c_max` (thicker sheet holds more water). | 190/300/640 gsm are the standard commercial weights (90/140/300 lb). Proportional scaling 估计. |
+| Texture: hot press / cold press / rough | Amplitude and feature size of `h` (sum of Worley and Perlin octaves). Hot press: low amplitude, fine; rough: high amplitude, coarse. | Generators from [CGW §4.1]; amplitudes 估计. |
+| Sizing | Scales capillary absorption `α` down and raises `δ` (dry paper resists receiving water). Matches the role of sizing in [CGW §2.1]. | Direction from [CGW §2.1]; numbers 估计. |
+| Weight: 190 / 300 / 640 gsm | Scales `c_max` and the time the sheet stays damp. | 190/300/640 gsm (90/140/300 lb) are the standard commercial weights; the scaling is 估计. |
 
 ## 3. Moving water [CGW §4.3]
 
-### 3.1 Update velocities [CGW §4.3.1, recalled]
+[CGW §4.3 p.424] lists six conditions the flow must satisfy: stay inside the
+mask; surplus water flows outward; damped (no oscillating waves); perturbed
+by paper texture; local changes have global effects; outward flow towards the
+edges for edge darkening.
 
-Shallow-water equations on a staggered grid; `u` lives at `(i+½, j)`,
-`v` at `(i, j+½)`, `p` at cell centres.
+### 3.1 Shallow-water equations [CGW §4.3 eq. 1-2 p.424]
 
 ```
-u ← u − ∇h ;  v ← v − ∇h           # paper slope
-Δt ← 1 / ceil(max(|u|, |v|))       # sub-step so nothing moves > 1 cell
-for t in 0..1 step Δt:
-    for each u-face (i+½, j):
+∂u/∂t = −(∂u²/∂x + ∂(uv)/∂y) + μ∇²u − ∂p/∂x
+∂v/∂t = −(∂v²/∂y + ∂(uv)/∂x) + μ∇²v − ∂p/∂y
+```
+
+(The printed equations write the advection denominators as `∂x²`, `∂y²`; that
+is a typesetting slip, the terms are first derivatives of `u²` and `uv`.)
+
+### 3.2 UpdateVelocities [CGW §4.3.1 p.424]
+
+Staggered grid: `u` at `(i+½, j)`, `v` at `(i, j+½)`, everything else at cell
+centres. A value at a point not stored directly is the average of its two
+neighbours, e.g. `u(i,j) = (u(i−½,j) + u(i+½,j))/2`.
+
+```
+(u, v) ← (u, v) − ∇h
+Δt ← 1 / ceil(max_ij(|u|, |v|))
+for t = 0 to 1 by Δt:
+    for all cells (i, j):
         A ← u²(i,j) − u²(i+1,j) + (uv)(i+½, j−½) − (uv)(i+½, j+½)
         B ← u(i+1.5,j) + u(i−½,j) + u(i+½,j+1) + u(i+½,j−1) − 4u(i+½,j)
-        u'(i+½,j) ← u(i+½,j) + Δt (A + μB + p(i,j) − p(i+1,j) − κ u(i+½,j))
-    (symmetric update for v)
-    u ← u' ; v ← v'
-    EnforceBoundaryConditions   # velocity = 0 on faces where M = 0
+        u'(i+½,j) ← u(i+½,j) + Δt (A − μB + p(i,j) − p(i+1,j) − κ u(i+½,j))
+        A ← v²(i,j) − v²(i,j+1) + (uv)(i−½, j+½) − (uv)(i+½, j+½)
+        B ← v(i+1,j+½) + v(i−1,j+½) + v(i,j+1.5) + v(i,j−½) − 4v(i,j+½)
+        v'(i,j+½) ← v(i,j+½) + Δt (A − μB + p(i,j) − p(i,j+1) − κ v(i,j+½))
+    (u, v) ← (u', v')
+    EnforceBoundaryConditions(M, u, v)   # zero velocity on the boundary of any cell with M = 0
 ```
 
-Values at half-integer points are averages of neighbours; values at integer
-points of `u` are averages of the two adjacent faces.
+- `μ = 0.1`, `κ = 0.01` "in all of our examples" [CGW §4 p.423].
+- **Sign of the viscosity term.** The pseudocode prints `A − μB`, while
+  eq. 1 has `+μ∇²u`, and `B` as written is the discrete Laplacian. With
+  `−μB` the term is anti-diffusive and amplifies velocity differences.
+  [ours]: implement `+μB`, which matches eq. 1 and condition 3 (damping).
+  If M1/M2 show the flow too uniform we will test the printed sign and log
+  the comparison.
+- `Δt` is chosen so no velocity exceeds one cell per step [CGW §4.3.1].
 
-- `A`: advection. `B`: discrete Laplacian (viscous diffusion).
-  **Sign of `μB`**: physically viscosity adds `+μ∇²u`. I recall the printed
-  pseudocode writing `A − μB`; whether that is a typo or a different sign
-  convention for `B` must be checked. [CGW §4.3.1, recalled, uncertain]
-- Viscosity `μ = 0.1`, viscous drag `κ = 0.01`. [CGW §4.3.1, recalled,
-  uncertain about exact values]. These are dimensionless per-step constants,
-  not SI viscosity. For reference, water at 20 °C has dynamic viscosity
-  1.0 mPa·s [CRC]; there is no direct conversion because [CGW] time and
-  length units are grid units.
-- Boundary condition: zero velocity on any face touching a dry cell
-  (`M = 0`), so water does not leave the wet-area mask. [CGW §4.3.1, recalled]
+### 3.3 RelaxDivergence [CGW §4.3.2 p.424-425]
 
-### 3.2 Relax divergence [CGW §4.3.2, recalled]
-
-Iterative pressure projection so the velocity field is (nearly)
-divergence-free:
+Following Foster & Metaxas, relax `∂u/∂x + ∂v/∂y` after each step:
 
 ```
 t ← 0
-repeat:
-    δmax ← 0
-    for each cell (i,j):
+repeat
+    (u', v') ← (u, v);  δmax ← 0
+    for all cells (i, j):
         δ ← ξ (u(i+½,j) − u(i−½,j) + v(i,j+½) − v(i,j−½))
-        p(i,j) += δ
-        u(i+½,j) += δ ; u(i−½,j) −= δ
-        v(i,j+½) += δ ; v(i,j−½) −= δ
+        p(i,j) ← p(i,j) + δ
+        u'(i+½,j) += δ;  u'(i−½,j) −= δ
+        v'(i,j+½) += δ;  v'(i,j−½) −= δ
         δmax ← max(|δ|, δmax)
-    t += 1
+    (u, v) ← (u', v');  t ← t + 1
 until δmax ≤ τ or t ≥ N
 ```
 
-Values: `N = 50`, `τ = 0.01`, `ξ = 0.1`. [CGW §4.3.2, recalled]
+`N = 50`, `τ = 0.01`, `ξ = 0.1` [CGW §4.3.2 p.424].
 
-### 3.3 Flow outward: edge darkening [CGW §4.3.3, recalled]
+Determinism note [ours]: the loop reads `u, v` and writes `u', v'`, so it is
+a Jacobi-style sweep and order-independent; vectorised NumPy gives the same
+result as the loop.
 
-Mechanism. Near the edge of a wet region the water layer is thin and
-evaporates faster, so water flows from the interior towards the edge and
-carries pigment with it; pigment accumulates in a dark ring when the area
-dries (the "coffee ring" effect). [CGW §2, §4.3.3, recalled]
+### 3.4 FlowOutward: edge darkening [CGW §4.3.3 p.425]
 
-[CGW] model this by lowering pressure near the mask boundary:
+Physical cause: in a wet-on-dry stroke the contact line is pinned by surface
+tension; liquid evaporating near the boundary is replenished from the
+interior, so there is outward flow that carries pigment to the edge
+[Deegan96, via CGW §4.3.3].
+
+Model: lower the pressure near the edge of the mask.
 
 ```
 M' ← GaussianBlur(M, K × K)
-p ← p − η (1 − M') M
+p ← p − η (1 − M') M            (eq. 3)
 ```
 
-So pressure drops only inside the wet area, and most where the blurred mask
-is far from 1, i.e. within about `K/2` cells of the edge. Values: `η = 0.05`,
-`K = 10`. [CGW §4.3.3, recalled]
+`K = 10`, `0.01 ≤ η ≤ 0.05` [CGW §4.3.3 p.425]. Kernel σ is not given;
+[ours] σ = K/3 (so the K × K kernel covers ±1.5σ). 估计.
 
-Evaporation. [CGW] do not run a physically separate evaporation equation
-for the surface layer; drying happens by water leaving the shallow layer into
-the capillary layer and by the capillary layer losing water at a constant
-rate. [CGW §4.6, recalled, uncertain]. Our engine needs a clock in seconds
-(M4: `wait(秒)`, `look` costs 15 s), so we add an explicit evaporation rate
-from the surface and capillary layers. Value 估计; to be calibrated so a
-cold-press flat wash of medium load becomes touch-dry in roughly 5-15
-minutes at room conditions, which matches common painting practice (估计,
-no measured source found yet).
+The paper describes this as "removes at each time step an amount of water
+from each cell" [CGW §4.3.3]: in [CGW] pressure `p` doubles as the water
+amount in a cell.
 
-**Project acceptance link (M1).** M1 requires edge density ≥ 1.3 × interior
-after drying. This threshold comes from the project goal, not from [CGW].
-[CGW] show edge darkening qualitatively (figures) and give no measured ratio.
-Measured ratios for real watercolor washes: no source found yet. 估计.
+### 3.5 Evaporation and drying
 
-## 4. Moving pigment [CGW §4.4, recalled]
+[CGW] have **no evaporation routine**. Evaporation is named as a physical
+process [CGW §2.1 p.422] and as the cause of edge darkening [CGW §4.3.3],
+and FlowOutward removes water near edges, but nothing dries the interior,
+and absorption into the capillary layer (§6 below) does not take water out
+of `p`. A glaze in [CGW] ends when the user-chosen number of iterations
+runs out.
 
-Suspended pigment `g_k` is advected by the surface velocity, with the same
-sub-step `Δt` as in 3.1. Upwind transfer between neighbours:
+[ours] The easel needs real drying (M1 "wait until dry", M2 "half-dry",
+M4 `wait(秒)` and `look` costing 15 s). We add:
+
+- uniform evaporation from the surface water `p` at rate `e_s` per second;
+- absorption of surface water into the capillary layer that does subtract
+  from `p` (water conserved between layers);
+- evaporation from `s` at rate `e_c` per second;
+- a cell leaves the mask (`M ← 0`) when its surface water reaches zero;
+  a glaze is "dry" when `p = 0` and `s < δ` everywhere.
+
+Values 估计: chosen so a medium-load cold-press wash becomes touch-dry in
+roughly 5-15 minutes of simulated time, the usual drying time painters
+work with (估计; no measured source found). Calibration happens in M1.
+
+**M1 acceptance link.** "Edge density ≥ 1.3 × interior after drying" comes
+from the project goal. [CGW] show edge darkening only in figures
+(Fig. 2b, 5) and give no ratio. 估计.
+
+## 4. Moving pigment [CGW §4.4 p.425]
+
+Pigment is advected by the water velocity, moving from each cell to its
+neighbours in proportion to the outflow:
 
 ```
+Δt ← 1 / ceil(max_ij(|u|, |v|))
 for each pigment k:
-    g' ← g
-    for each cell (i,j):
-        g'(i+1,j) += max(0,  u(i+½,j) · g(i,j))
-        g'(i−1,j) += max(0, −u(i−½,j) · g(i,j))
-        g'(i,j+1) += max(0,  v(i,j+½) · g(i,j))
-        g'(i,j−1) += max(0, −v(i,j−½) · g(i,j))
-        g'(i,j)   −= (sum of the four amounts above)
-    g ← g'
+    for t = 0 to 1 by Δt:
+        g' ← g ← g^k
+        for all cells (i, j):
+            g'(i+1,j) += max(0,  u(i+½,j) g(i,j))
+            g'(i−1,j) += max(0, −u(i−½,j) g(i,j))
+            g'(i,j+1) += max(0,  v(i,j+½) g(i,j))
+            g'(i,j−1) += max(0, −v(i,j−½) g(i,j))
+            g'(i,j)   −= the sum of those four amounts
+        g^k ← g'
 ```
 
-(Each amount is multiplied by `Δt` inside the sub-step loop.) Pigment mass
-is conserved by construction. [CGW §4.4, recalled]
+The printed pseudocode does not multiply by `Δt` inside the sub-step loop;
+with `Δt < 1` that would move too much pigment per sub-step. [ours]: scale
+each amount by `Δt`. Mass is conserved either way.
 
-Diffusion. Pigment spreading in wet-in-wet comes from the velocity field
-plus the viscous Laplacian term; [CGW] do not add a separate pigment
-diffusion term in §4.4. [CGW §4.4, recalled, uncertain]. If wet-in-wet
-transitions are too sharp in M2 we may add a small explicit diffusion of
-`g` (Brownian/turbulent mixing); its coefficient would be 估计.
+[CGW] add no separate pigment diffusion term. Wet-in-wet softness in [CGW]
+comes only from the velocity field. [ours] If M2's "wet-in-wet transition
+≥ 15 px" fails with advection alone, add a small explicit diffusion of `g`
+inside the mask (coefficient 估计) and record that it is not in [CGW].
 
-## 5. Transferring pigment: deposition, lifting, granulation, staining [CGW §4.5, recalled]
+Pigment particle sizes are 0.05-0.5 µm [CGW §2.1 p.422]; lighter pigments
+stay suspended longer and travel further [CGW §2.1].
 
-Each pigment k has three parameters:
+## 5. Pigment adsorption and desorption [CGW §4.5 p.425]
 
-| Symbol | Name | Effect |
-|---|---|---|
-| `ρ_k` | density | Heavy pigments settle faster. |
-| `ω_k` | staining power | High `ω` resists being picked back up. |
-| `γ_k` | granularity | How strongly paper height modulates settling and lifting. |
+Per pigment k: density `ρ`, staining power `ω`, granulation `γ`.
 
 ```
-for each cell in M, for each pigment k:
-    δdown ← g_k (1 − h·γ_k) ρ_k
-    δup   ← d_k (1 + (h − 1)·γ_k) ρ_k / ω_k
-    if d_k + δdown > 1: δdown ← max(0, 1 − d_k)
-    if g_k + δup  > 1: δup   ← max(0, 1 − g_k)
-    d_k += δdown − δup
-    g_k += δup − δdown
+for each pigment k, for all cells with M(i,j) = 1:
+    δdown ← g (1 − h γ) ρ
+    δup   ← d (1 + (h − 1) γ) ρ / ω
+    if d + δdown > 1: δdown ← max(0, 1 − d)
+    if g + δup  > 1: δup   ← max(0, 1 − g)
+    d ← d + δdown − δup
+    g ← g + δup − δdown
 ```
 
-- Granulation: with `γ > 0`, valleys (small `h`) receive more deposit and
-  lose less, so pigment collects in the paper's low points. [CGW §4.5,
-  recalled]
-- Staining: dividing `δup` by `ω` means staining pigments, once deposited,
-  hardly lift. This is the mechanism behind the M3 acceptance "staining
-  pigments cannot be lifted, non-staining ones partly can". [CGW §4.5,
-  recalled]
-- Lifting with a wet brush (M4 `lift`) is then: add water so the cell is in
-  `M`, let `δup` move pigment from `d` back to `g`, remove water and the
-  suspended `g` with the brush. Mechanism from [CGW §4.5]; the brush
-  pickup model is ours, 估计.
+- **Granulation**: with large `γ`, low cells (small `h`) adsorb more and
+  desorb less, so pigment collects in the paper's hollows [CGW §2.2 p.422,
+  §4.5]. [CGW §2.2] note granulation is strongest when the paper is very wet.
+- **Separation**: denser pigments settle first [CGW §2.2], from `ρ`.
+- **Staining**: `δup` is divided by `ω`, so a high-`ω` pigment barely lifts
+  once deposited [CGW §4.5]. This is the mechanism behind M3's "staining
+  pigments cannot be lifted, non-staining ones partly can".
+- **Glazing**: paints with low resolubility let a new wash go over a dried
+  one without disturbing it [CGW §2.2 p.422]. In [CGW] each glaze is a
+  separate simulation, so a dry lower glaze never re-wets. [ours] Our
+  engine keeps that: once a glaze is dry its `d` becomes a frozen KM layer;
+  `lift` with a wet brush re-wets only the current top glaze, and frozen
+  layers below are lifted in proportion to `1/ω` (估计).
+- **Lift and blot** [ours]: `lift` = add water to the region (joins `M`),
+  run TransferPigment so `δup` moves `d` back into `g`, then the brush
+  removes a fraction of `p` and `g`. `blot` removes most of `p` and `g`
+  without adding water. Pickup fractions 估计.
 
-Per-pigment values: [CGW] give `ρ, ω, γ` per pigment in the pigment table of
-§5 (alongside K and S). I do not recall those numbers reliably. 估计 until
-checked. Qualitative ordering for our 8 pigments from [Smith03] and common
-manufacturer pigment charts (granulating: ultramarine, burnt sienna, raw
-umber, raw sienna; staining: Prussian blue, alizarin/madder, phthalo-type
-colours; non-staining: cadmiums, earths, ivory black). Exact numbers 估计.
+Values for [CGW]'s 12 example pigments are in §8 below.
 
-## 6. Capillary flow and backruns [CGW §4.6, recalled]
+## 6. Capillary flow and backruns [CGW §4.6 p.425]
 
-Water from the shallow layer soaks into the paper and diffuses through it:
+Backruns happen "only when a puddle of water spreads slowly into a region
+that is drying but still damp" [CGW §4.6, citing Szabo74]. In a damp region
+the only water is in the paper pores, so flow is dominated by capillary
+action, not momentum. As the water spreads it pushes pigment, giving
+branching shapes with strongly darkened edges [CGW §2.2 p.422].
 
 ```
-for each cell in M:
-    s ← s + max(0, min(α, c − s))          # absorption from surface layer
+for all cells with M(i,j) > 0:
+    s(i,j) ← s(i,j) + max(0, min(α, c(i,j) − s(i,j)))
 s' ← s
-for each cell (i,j), for each 4-neighbour (k,l):
+for all cells (i, j), for each 4-neighbour (k, l):
     if s(i,j) > ε and s(i,j) > s(k,l) and s(k,l) > δ:
         Δs ← max(0, min(s(i,j) − s(k,l), c(k,l) − s(k,l)) / 4)
-        s'(i,j) −= Δs
-        s'(k,l) += Δs
+        s'(i,j) ← s'(i,j) − Δs
+        s'(k,l) ← s'(k,l) + Δs
 s ← s'
-for each cell: if s > σ then M ← 1          # wet area grows
+for all cells: if s(i,j) > σ then M(i,j) ← 1
 ```
 
-| Symbol | Meaning |
-|---|---|
-| `α` | absorption rate from surface to paper |
-| `ε` | minimum saturation a cell needs to give water |
-| `δ` | minimum saturation a cell needs to receive water (dry cells, `s ≤ δ`, receive nothing, so wet areas do not bleed into dry paper: this gives the hard "wet-on-dry" edge) |
-| `σ` | saturation above which a cell joins the wet-area mask |
-
-[CGW §4.6, recalled]. Numeric values of `α, ε, δ, σ`: not recalled. 估计.
-
-**Backruns (回水花).** When water is added next to or into a region that is
-damp but not wet (`δ < s < σ`), capillary water creeps slowly into the damp
-paper. The wet-area mask expands by the `s > σ` rule, so the expanding front
-is irregular and slow, and the edge-darkening outflow (3.3) keeps pushing
-pigment to that moving front. The result is a pale centre with a dark,
-branching ("cauliflower") margin. [CGW] obtain this by requiring `δ < σ` so
-that water can move through damp cells without them becoming part of the
-flowing region. [CGW §2, §4.6, recalled, uncertain about the exact
-inequality] This is the mechanism M2 tests with "add water to a half-dry
-area".
-
-Evaporation of capillary water: constant rate removal from `s` per step.
-[CGW §4.6, recalled, uncertain]. Our seconds-based rate: 估计 (see 3.3).
-
-## 7. Drybrush [CGW §4.7, recalled]
-
-A brush with little water only wets the high points of the paper: the
-wet-area mask for the stroke is restricted to cells with `h` above a
-threshold that rises as the brush dries. Gives broken, textured strokes.
-[CGW §4.7, recalled]. Threshold mapping from brush water load: 估计.
-
-## 8. Wet-in-wet, wet-on-dry: what produces each edge
-
-| Situation | Mechanism | Expected edge |
+| Symbol | Meaning [CGW §4.6] | Value |
 |---|---|---|
-| Wet-in-wet | New pigment enters cells already in `M`; velocity field and advection spread it across the existing wet region. | Soft; M2 wants transition ≥ 15 px. |
-| Wet-on-dry | Mask is exactly the brush footprint; dry neighbours have `s ≤ δ` and do not receive capillary water; edge darkening concentrates pigment at the boundary. | Hard; M2 wants ≤ 3 px. |
-| Water into half-dry | See backruns (§6). | Pale centre, dark scalloped margin. |
+| `α` | absorption rate from the shallow-water layer | not given; 估计 0.05 per step |
+| `ε` | minimum saturation before a cell can give water | not given; 估计 |
+| `δ` | saturation below which a cell will not receive water | not given; 估计 |
+| `σ` | saturation above which the cell joins the wet-area mask | not given; 估计 |
 
-The 15 px and 3 px thresholds are from the project goal. Source in the
-watercolor literature: none found. 估计 (they are plausible for a 1000 px
-canvas: 15 px = 1.5 % of width).
+Irregular branching comes from cell-to-cell variation in `c`, which comes
+from the paper height [CGW §4.6].
 
-## 9. Optics: Kubelka-Munk [CGW §5, recalled]
+How the pieces give the three M2 cases [ours, derived from the above]:
 
-Each glaze stores, per cell and per pigment, a thickness `x` (taken from
-deposited plus suspended pigment after drying). Each pigment has absorption
-`K` and scattering `S` per RGB channel.
+- **Wet-on-dry, hard edge**: dry neighbours have `s ≤ δ`, so no capillary
+  water reaches them and the mask stays at the brush footprint; FlowOutward
+  pushes pigment to that fixed boundary.
+- **Wet-in-wet, soft edge**: the paper is already inside `M`, so new pigment
+  is carried by the velocity field across the existing wet area.
+- **Water into a half-dry wash, backrun**: the damp area has
+  `δ < s ≤ σ` and is outside `M`. Capillary water reaches it, cells cross
+  `σ` one by one in an irregular order set by `c`, the mask grows slowly,
+  and the moving edge with FlowOutward and advection pushes pigment ahead
+  of it: pale centre, dark scalloped margin. So we need `δ < σ` and a
+  damp region whose `s` lies between them. The paper does not state this
+  inequality; it follows from the pseudocode.
 
-Single layer reflectance and transmittance [CGW §5.1, recalled; equations
-from KM theory as in [Haase92]]:
+[CGW "Future Work: Generalization" p.429] say their model treats backruns and
+wet-in-wet as two separate processes, while in real watercolor they are
+two ends of one continuum set by paper wetness, and that unifying them
+"would be a significant improvement". Our explicit drying (§3.5) is a step
+in that direction: the same capillary layer runs all the time, and the
+case that results depends on how wet the paper is.
 
-```
-a = 1 + K/S
-b = sqrt(a² − 1)
-c = a·sinh(b S x) + b·cosh(b S x)
-R = sinh(b S x) / c
-T = b / c
-```
+## 7. Drybrush [CGW §4.7 p.426]
 
-Mixing pigments in one layer: `K` and `S` are the concentration-weighted
-sums of each pigment's `K`, `S`. [CGW §5.1, recalled]
+A nearly dry brush at a grazing angle wets only the high points of the
+paper [CGW §2.2]. Model: exclude from the wet-area mask any cell whose
+height is below a user-defined threshold [CGW §4.7]. In the interactive
+application the threshold is set by "the depth to which the brush is
+allowed to touch the paper" [CGW §6.1 p.427].
 
-Compositing two layers (layer 1 over layer 2) [CGW §5.2, recalled]:
+[ours] Threshold derived from the brush's remaining water load and
+pressure. Mapping 估计.
 
-```
-R = R1 + T1² R2 / (1 − R1 R2)
-T = T1 T2 / (1 − R1 R2)
-```
+## 8. Optics: Kubelka-Munk [CGW §5 p.426-427]
 
-Glazes are composited top-down this way and finally over the paper's
-reflectance (white, `R ≈ 1`, possibly slightly tinted; 估计).
+Each pigment has absorption `K` and scattering `S`, three values each (RGB)
+[CGW §5 p.426].
 
-This is what M3's "glazing after drying matches KM" acceptance tests
-against: two dried glazes composited with these formulas must equal the
-rendered result.
+### 8.1 Pigment from appearance [CGW §5.1 p.426]
 
-Specifying a pigment from its look [CGW §5.1, recalled]: given the user's
-chosen colour of a unit-thickness layer over white `R_w` and over black
-`R_b`, per channel:
+Given the user's chosen RGB colour of a unit-thickness layer over white
+`R_w` and over black `R_b`, per channel, with `0 < R_b < R_w < 1`:
 
 ```
 a = ½ (R_w + (R_b − R_w + 1) / R_b)
@@ -340,34 +343,100 @@ S = (1/b) · arccoth( (b² − (a − R_w)(a − 1)) / (b (1 − R_w)) )
 K = S (a − 1)
 ```
 
-This lets us define our 8 tube pigments (ultramarine, burnt sienna, raw
-sienna, cadmium yellow, alizarin/madder, Prussian blue, ivory black, raw
-umber) from target swatch colours if the [CGW] table does not include them.
+Values of `K` or `S` above 1 can come out for very saturated colours; [CGW]
+allow them and report no ill effects [CGW §5.1].
 
-[CGW] Figure/table of 12 sample pigments with K and S (quinacridone rose,
-indian red, cadmium yellow, hooker's green, cerulean blue, burnt umber,
-cadmium red, brilliant orange, hansa yellow, phthalo green, french
-ultramarine, interference lilac). I recall the list of names but do not
-trust my memory of the 72 numbers; they must be copied from the PDF. Of our
-8 pigments only cadmium yellow, burnt umber (as a stand-in neighbour of raw
-umber) and ultramarine overlap. The others will be specified via the
-`R_w, R_b` route; swatch targets 估计 (to be taken from manufacturer charts
-if reachable).
+### 8.2 Layer reflectance and transmittance [CGW §5.2 p.426]
 
-## 10. Time and units (project-specific)
+```
+c = a sinh(b S x) + b cosh(b S x)
+R = sinh(b S x) / c
+T = b / c
+```
 
-[CGW] time is in simulation steps. The easel needs seconds (`wait(秒)`,
-`look` = 15 s). Proposal: fixed `Δt_phys` seconds per outer step, chosen so
-the drying time of §3.3 holds. 估计. Determinism: all randomness (paper
-height, brush bristle jitter) from a single seeded `numpy.random.Generator`;
-no wall-clock or thread-order dependence. Numba kernels must use fixed
-iteration order so float sums reproduce bit for bit.
+Several pigments in one layer: `K` and `S` of each pigment are weighted by
+its relative thickness `x_k / x`, with `x = Σ x_k` [CGW §5.2]. A pigment's
+thickness is `x_k = g_k + d_k` [CGW §5.2 p.426].
 
-## Open items for M0 verification
+### 8.3 Compositing two layers [CGW §5.2 p.426]
 
-1. Check every `recalled` tag against the PDF, record page numbers.
-2. Sign of `μB` in UpdateVelocities.
-3. Values of `μ, κ` (§4.3.1) and whether [CGW] give `α, ε, δ, σ`.
-4. Per-pigment `ρ, ω, γ` and the K/S table.
-5. Exact backrun threshold relation.
-6. How [CGW] handle evaporation.
+```
+R = R1 + T1² R2 / (1 − R1 R2)
+T = T1 T2 / (1 − R1 R2)
+```
+
+Repeated for each glaze; the final `R` is the pixel colour [CGW §5.2].
+[ours] The bottom layer is the paper: white, `R ≈ 0.95` per channel 估计
+(watercolor paper is not a perfect reflector).
+
+This is what M3's "glazing after drying matches KM" acceptance tests: the
+engine's render of two dried glazes must equal these formulas applied to
+the two layers' `K, S, x`.
+
+[CGW §5.4 p.427] list the KM assumptions watercolor violates (refractive
+index mismatch at the air and paper boundaries, non-random particle
+orientation for metallic paints, non-diffuse light, single wavelength,
+clumping) and conclude results are plausible approximations, not accurate.
+
+### 8.4 [CGW] pigment table [CGW Fig. 5 p.427]
+
+| Pigment | K_r | K_g | K_b | S_r | S_g | S_b | ρ | ω | γ |
+|---|---|---|---|---|---|---|---|---|---|
+| Quinacridone Rose | 0.22 | 1.47 | 0.57 | 0.05 | 0.003 | 0.03 | 0.02 | 5.5 | 0.81 |
+| Indian Red | 0.46 | 1.07 | 1.50 | 1.28 | 0.38 | 0.21 | 0.05 | 7.0 | 0.40 |
+| Cadmium Yellow | 0.10 | 0.36 | 3.45 | 0.97 | 0.65 | 0.007 | 0.05 | 3.4 | 0.81 |
+| Hookers Green | 1.62 | 0.61 | 1.64 | 0.01 | 0.012 | 0.003 | 0.09 | 1.0 | 0.41 |
+| Cerulean Blue | 1.52 | 0.32 | 0.25 | 0.06 | 0.26 | 0.40 | 0.01 | 1.0 | 0.31 |
+| Burnt Umber | 0.74 | 1.54 | 2.10 | 0.09 | 0.09 | 0.004 | 0.09 | 9.3 | 0.90 |
+| Cadmium Red | 0.14 | 1.08 | 1.68 | 0.77 | 0.015 | 0.018 | 0.02 | 1.0 | 0.63 |
+| Brilliant Orange | 0.13 | 0.81 | 3.45 | 0.005 | 0.009 | 0.007 | 0.01 | 1.0 | 0.14 |
+| Hansa Yellow | 0.06 | 0.21 | 1.78 | 0.50 | 0.88 | 0.009 | 0.06 | 1.0 | 0.08 |
+| Phthalo Green | 1.55 | 0.47 | 0.63 | 0.01 | 0.05 | 0.035 | 0.02 | 1.0 | 0.12 |
+| French Ultramarine | 0.86 | 0.86 | 0.06 | 0.005 | 0.005 | 0.09 | 0.01 | 3.1 | 0.91 |
+| Interference Lilac | 0.08 | 0.11 | 0.07 | 1.25 | 0.42 | 1.43 | 0.06 | 1.0 | 0.08 |
+
+[CGW §5.3] say these colours came from "fairly casual observations" of real
+paints over black and white, so the table is a reasonable starting point,
+not a measurement.
+
+### 8.5 Our 8 tube pigments (M3) [ours]
+
+| Ours | Starting point |
+|---|---|
+| Ultramarine (群青) | [CGW] French Ultramarine row, used as is. |
+| Burnt sienna (熟赭) | No [CGW] row. Derive K, S from target `R_w, R_b` via §8.1; ρ, ω, γ 估计 (granulating, non-staining). |
+| Raw sienna (生赭) | Same route; 估计. |
+| Cadmium yellow (镉黄) | [CGW] Cadmium Yellow row, used as is. |
+| Alizarin / madder (茜草红) | Same route; staining, so high ω 估计. Nearest [CGW] row: Quinacridone Rose. |
+| Prussian blue (普蓝) | Same route; staining, transparent, high ω 估计. |
+| Ivory black (象牙黑) | Same route; low γ, non-staining 估计. |
+| Raw umber (生褐) | Start from [CGW] Burnt Umber K, S shifted greener; ρ, γ 估计. |
+
+M3 requires ultramarine and burnt sienna to granulate visibly on rough
+paper (so high γ, as in [CGW]'s ultramarine 0.91), and staining pigments to
+resist lifting. One inconsistency to watch: [CGW] give Burnt Umber
+ω = 9.3, the most staining in their table, while real earth pigments are
+usually classed non-staining. For our earths we will use low ω and record
+that as a departure from [CGW].
+
+## 9. Time, units and determinism [ours]
+
+- [CGW] time is in simulation iterations. Our easel needs seconds. One
+  outer step = a fixed `Δt_phys` seconds of painting time; all rates in
+  §3.5 are per second and multiplied by `Δt_phys`. Value 估计, set in M1.
+- All randomness (paper height, bristle jitter) comes from one seeded
+  `numpy.random.Generator`. No wall-clock time, no thread-order dependence.
+  Numba kernels must use a fixed loop order so float sums reproduce bit for
+  bit; replay tests compare raw arrays, not only PNGs.
+
+## 10. Where we depart from [CGW] (summary)
+
+| Item | [CGW] | Ours | Why |
+|---|---|---|---|
+| Viscosity sign | pseudocode `−μB` | `+μB` | Matches eq. 1 and the damping requirement. |
+| Pigment advection | no `Δt` factor in sub-step | multiply by `Δt` | Sub-steps otherwise over-transport. |
+| Evaporation | none | explicit, per second | Easel needs real drying and wait/look timing. |
+| Absorption | does not remove surface water | conserves water | Needed for drying to be meaningful. |
+| Capillary layer | backruns only | always on | One model for wet-in-wet through backrun. |
+| Earth pigment ω | Burnt Umber 9.3 | low | Real earths are non-staining; M3 needs that. |
+| Pigment diffusion | none | only if M2 needs it | Will be logged if added. |

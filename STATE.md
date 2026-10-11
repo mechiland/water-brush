@@ -1,15 +1,12 @@
 # STATE
 
-Current milestone: **M0 Research** (in progress, draft written)
+Current milestone: **M1 Flat wash** (not started)
 
 Consecutive failures: 0
 
 ## Milestones
 
-- [ ] M0 Research: mechanisms and parameters of Curtis 1997 §4-5 in `notes/research.md`
-  - [x] Repository skeleton (package, tests, notes, state files)
-  - [x] Draft of flow, diffusion, deposition, evaporation, backruns, edge darkening, KM optics
-  - [ ] Verify the draft against the PDF and replace every `recalled` tag with a page reference
+- [x] M0 Research: mechanisms and parameters of Curtis 1997 §4-5 in `notes/research.md` (verified against the PDF, round 2)
 - [ ] M1 Flat wash
 - [ ] M2 Wetness and edges
 - [ ] M3 Pigment identity
@@ -18,16 +15,16 @@ Consecutive failures: 0
 
 ## Next step
 
-Get the Curtis 1997 PDF into the session (either the environment's network
-policy allows `grail.cs.washington.edu`, or the PDF is uploaded to the
-project files). Then work through "Open items for M0 verification" at the end
-of `notes/research.md`. When all are resolved, mark M0 done and start M1 with
-the smallest item: paper height field plus a static wet-area mask and the
-shallow-water velocity update.
+M1, smallest item: paper height field (Worley + Perlin, seeded) with
+`c = h (c_max − c_min) + c_min`, plus a render of the three textures.
+Then the shallow-water velocity update and divergence relaxation on a
+static mask, then FlowOutward, pigment transport and transfer, explicit
+drying, and the flat-wash edge/interior density test.
 
 ## Known issues
 
-- The paper PDF is unreachable from this environment: the egress proxy
-  refuses `grail.cs.washington.edu` and `www.cs.princeton.edu` (403). The
-  research draft is written from recall and is tagged as such.
+- [CGW] pseudocode prints `A − μB` in UpdateVelocities, which contradicts
+  eq. 1. We implement `+μB`; see research.md §3.2.
+- [CGW] give no values for `c_min, c_max, α, ε, δ, σ` and have no
+  evaporation model. Our values are estimates to be calibrated in M1/M2.
 - Numba is not preinstalled; `pip install numba` works.
