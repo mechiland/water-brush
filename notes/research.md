@@ -53,10 +53,9 @@ resolution-dependent [CGW §4.3.1 p.424], so all constants below are per grid
 cell and per step, not physical units.
 
 **Grid for this project [ours].** Canvas 1000 units wide, render 1000-2000 px.
-One simulation cell = one canvas unit, so 1 cell = 1 px at 1000 px.
-Because [CGW] is resolution-dependent, we keep the simulation grid fixed at
-1000 cells across and upsample for the 2000 px render, rather than
-simulating at render resolution. 估计.
+Because [CGW] is resolution-dependent, the simulation grid is fixed in
+physical units and the render is resampled. The M1 implementation sets the
+units and grid (1 unit = 0.3 mm; see §11 on the M1 branch).
 
 ## 2. Paper [CGW §4.1 p.424]
 
@@ -430,6 +429,11 @@ that as a departure from [CGW].
   bit; replay tests compare raw arrays, not only PNGs.
 
 ## 10. Where we depart from [CGW] (summary)
+
+Written at M0 against the [CGW] model. The M1 implementation (§11 on the
+M1 branch) replaces the [CGW] velocity field and FlowOutward with thin-film
+flow and edge-enhanced evaporation; where §11 and this table disagree, §11
+describes the engine.
 
 | Item | [CGW] | Ours | Why |
 |---|---|---|---|

@@ -1,6 +1,6 @@
 # STATE
 
-Current milestone: **M1 Flat wash** (not started)
+Current milestone: **M1 Flat wash** (built in a separate thread, draft PR #1, stacked on this M0 branch)
 
 Consecutive failures: 0
 
@@ -15,11 +15,11 @@ Consecutive failures: 0
 
 ## Next step
 
-M1, smallest item: paper height field (Worley + Perlin, seeded) with
-`c = h (c_max − c_min) + c_min`, plus a render of the three textures.
-Then the shallow-water velocity update and divergence relaxation on a
-static mask, then FlowOutward, pigment transport and transfer, explicit
-drying, and the flat-wash edge/interior density test.
+M1 is implemented in draft PR #1 (thin-film surface water, edge-enhanced
+evaporation; research.md §11 on that branch). When this PR merges, PR #1
+retargets onto main and resolves STATE.md / research.md against this
+version. Section numbers changed in the verified research.md: FlowOutward
+is now §3.4 and drying §3.5 (the round 1 draft had both in §3.3).
 
 ## Known issues
 
